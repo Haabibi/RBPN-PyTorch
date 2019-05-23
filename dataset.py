@@ -78,11 +78,15 @@ def load_img_future(filepath, nFrames, scale, other_dataset):
     return target, input, neigbor
 
 def get_flow(im1, im2):
-    im1 = np.array(im1)
-    im2 = np.array(im2)
-    im1 = im1.astype(float) / 255.
-    im2 = im2.astype(float) / 255.
-    
+    #im1 = np.array(im1)
+    #im2 = np.array(im2)
+    #im1 = im1.astype(float) / 255.
+    #im2 = im2.astype(float) / 255.
+
+    print("L86: ", im1.dtype, im2.dtype)
+    im1 = im1.double().cpu().numpy() / 255
+    im2 = im2.double().cpu().numpy() / 255
+    print("L89: ", type(im1), type(im2))
     # Flow Options:
     alpha = 0.012
     ratio = 0.75
