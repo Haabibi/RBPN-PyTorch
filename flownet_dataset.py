@@ -11,6 +11,9 @@ from skimage import img_as_float
 from skimage.transform import resize
 from random import randrange
 import os.path
+from flownet2.models import FlowNet2
+from torch.autograd import Variable
+import time
 
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg"])
@@ -46,10 +49,11 @@ def load_img(filepath, nFrames, scale, other_dataset):
 def load_img_future(filepath, nFrames, scale, other_dataset):
     tt = int(nFrames/2)
     if other_dataset:
-        target = modcrop(Image.open(filepath).convert('RGB'),scale)
-        print("THIS IS THE TARGET!!!", filepath)
+        #target = modcrop(Image.open(filepath).convert('RGB'),scale)
+        target = Image.open(filepath).convert('RGB')
+        target = target.resize((768, 512))
         input = target.resize((int(target.size[0]/scale),int(target.size[1]/scale)), Image.BICUBIC)
-        
+        #input = target.resize(( 192, 128), Image.BICUBIC)
         char_len = len(filepath)
         neigbor=[]
         if nFrames%2 == 0:
@@ -57,13 +61,12 @@ def load_img_future(filepath, nFrames, scale, other_dataset):
         else:
             seq = [x for x in range(-tt,tt+1) if x!=0]
         #random.shuffle(seq) #if random sequence
-        print("L58 from dataset.py SEQ: ", seq)
         for i in seq:
             index1 = int(filepath[char_len-7:char_len-4])+i
             file_name1=filepath[0:char_len-7]+'{0:03d}'.format(index1)+'.png'
-            print("L62 from dataset.py: Index & FileName ", index1, file_name1) 
             if os.path.exists(file_name1):
                 temp = modcrop(Image.open(file_name1).convert('RGB'), scale).resize((int(target.size[0]/scale),int(target.size[1]/scale)), Image.BICUBIC)
+                #temp = modcrop(Image.open(file_name1).convert('RGB'), scale).resize((192, 128), Image.BICUBIC)
                 neigbor.append(temp)
             else:
                 print('neigbor frame- is not exist')
@@ -79,31 +82,22 @@ def load_img_future(filepath, nFrames, scale, other_dataset):
         print("L77 (when other_dataset is set to false) SEQ: ", seq)
         for j in seq:
             neigbor.append(modcrop(Image.open(filepath+'/im'+str(j)+'.png').convert('RGB'), scale).resize((int(target.size[0]/scale),int(target.size[1]/scale)), Image.BICUBIC))
-    print("L80: ", target, input, neigbor)
     return target, input, neigbor
 
-def get_flow(im1, im2):
-    im1 = resize(np.array(im1), (128, 192), anti_aliasing=False)
-    im2 = resize(np.array(im2), (128, 192), anti_aliasing=False)
-    #im1 = np.array(im1)
-    #im2 = np.array(im2)
-    im1 = im1.astype(float) / 255.
-    im2 = im2.astype(float) / 255.
-    print("[///////////////////////////DATASET]: ", im1.shape, im2.shape) 
-    # Flow Options:
-    alpha = 0.012
-    ratio = 0.75
-    minWidth = 20
-    nOuterFPIterations = 7
-    nInnerFPIterations = 1
-    nSORIterations = 30
-    colType = 0  # 0 or default:RGB, 1:GRAY (but pass gray image with shape (h,w,1))
+def get_flow(im1, im2, net, args, time_queue):
+    #im1 = resize(np.array(im1), (128, 192), anti_aliasing=False)
+    #im2 = resize(np.array(im2), (128, 192), anti_aliasing=False)
+    im1 = np.array(im1)
+    im2 = np.array(im2)
+    ims = np.array([[im1, im2]]).transpose((0, 4, 1, 2, 3)).astype(np.float32)
+    ims = torch.from_numpy(ims)
+    ims_v = Variable(ims.cuda(), requires_grad=False)
     
-    u, v, im2W = pyflow.coarse2fine_flow(im1, im2, alpha, ratio, minWidth, nOuterFPIterations, nInnerFPIterations,nSORIterations, colType)
-    flow = np.concatenate((u[..., None], v[..., None]), axis=2)
-    print("[///////////////////////////DATASET L101]: ", flow.shape) 
-    #flow = rescale_flow(flow,0,1)
-    return flow
+    t1= time.time()
+    pred_flow = net(ims_v).squeeze()
+    t2 = time.time()
+    time_queue.put(t2-t1)
+    return pred_flow
 
 def rescale_flow(x,max_range,min_range):
     max_val = np.max(x)
@@ -205,13 +199,14 @@ class DatasetFromFolder(data.Dataset):
             bicubic = self.transform(bicubic)
             neigbor = [self.transform(j) for j in neigbor]
             flow = [torch.from_numpy(j.transpose(2,0,1)) for j in flow]
+
         return input, target, neigbor, flow, bicubic
 
     def __len__(self):
         return len(self.image_filenames)
 
 class DatasetFromFolderTest(data.Dataset):
-    def __init__(self, image_dir, nFrames, upscale_factor, file_list, other_dataset, future_frame, net, args, transform=None):
+    def __init__(self, image_dir, nFrames, upscale_factor, file_list, other_dataset, future_frame, net, time_queue, args, transform=None):
         super(DatasetFromFolderTest, self).__init__()
         alist = [line.rstrip() for line in open(join(image_dir,file_list))]
         self.image_filenames = [join(image_dir,x) for x in alist]
@@ -220,15 +215,26 @@ class DatasetFromFolderTest(data.Dataset):
         self.transform = transform
         self.other_dataset = other_dataset
         self.future_frame = future_frame
+        self.args = args
         self.flownet = net
+        self.time_queue = time_queue 
 
     def __getitem__(self, index):
         if self.future_frame:
             target, input, neigbor = load_img_future(self.image_filenames[index], self.nFrames, self.upscale_factor, self.other_dataset)
         else:
             target, input, neigbor = load_img(self.image_filenames[index], self.nFrames, self.upscale_factor, self.other_dataset)
-        flow = [get_flow(input,j) for j in neigbor]
-        #print("L227 Dataset.py: Target: {}, INPUT: {}, LEN_NEIGHBOR: {}, LEN_FLOW:{}, FLOW_shape:{}".format(target, input, len(neigbor), len(flow), flow[0].shape), type(flow[0])) 
+        
+        flow = []
+        time_flow = []
+        flow_t_origin = time.time()
+        for j in neigbor:
+          flow_t = time.time()
+          flow.append(get_flow(input, j, self.flownet, self.args, self.time_queue))
+          time_flow.append(time.time() - flow_t)
+        print("TIME TO EXTRACT FLOWS: ", time.time() - flow_t_origin, time_flow)  
+        
+        #flow = [get_flow(input,j, self.args) for j in neigbor]
 
         bicubic = rescale_img(input, self.upscale_factor)
         
@@ -237,9 +243,8 @@ class DatasetFromFolderTest(data.Dataset):
             input = self.transform(input)
             bicubic = self.transform(bicubic)
             neigbor = [self.transform(j) for j in neigbor]
-            flow = [torch.from_numpy(j.transpose(2,0,1)) for j in flow]
+            #flow = [torch.from_numpy(j.transpose(2,0,1)) for j in flow]
             
-        print("|||||||||||||||||L208 :" , input.shape, target.shape, neigbor[0].shape, flow[0].shape)
         return input, target, neigbor, flow, bicubic
       
     def __len__(self):

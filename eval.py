@@ -11,13 +11,17 @@ from rbpn import Net as RBPN
 from data import get_test_set
 from functools import reduce
 import numpy as np
-
-from scipy.misc import imsave
+#from torch.multiprocessing import set_start_method 
+#set_start_method('spawn')
+from imageio import imsave
+#from scipy.misc import imsave
 import scipy.io as sio
 import time
 import cv2
 import math
 import pdb
+from flownet2.models import FlowNet2
+from multiprocessing import Queue
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Super Res Example')
@@ -37,7 +41,8 @@ parser.add_argument('--model_type', type=str, default='RBPN')
 parser.add_argument('--residual', type=bool, default=False)
 parser.add_argument('--output', default='Results/', help='Location to save checkpoint models')
 parser.add_argument('--model', default='weights/RBPN_4x.pth', help='sr pretrained base model')
-
+parser.add_argument('--rgb_max', type=float, default=255.)
+parser.add_argument('--fp16', action='store_true', help='Run model in pseudo-fp16 mode.')
 opt = parser.parse_args()
 
 gpus_list=range(opt.gpus)
@@ -51,8 +56,21 @@ torch.manual_seed(opt.seed)
 if cuda:
     torch.cuda.manual_seed(opt.seed)
 
+print('===>Building FlowNet model ')
+path = '/home/haabibi/official-flownet2-pytorch/ckpt/FlowNet2_checkpoint.pth.tar'
+flownet2 = FlowNet2(opt)
+pretrained_dict = torch.load(path)['state_dict']
+model_dict = flownet2.state_dict()
+pretrained_dict = {k:v for k,
+                   v in pretrained_dict.items() if k in model_dict}
+model_dict.update(pretrained_dict)
+flownet2.load_state_dict(model_dict)
+flownet2.cuda()
+
 print('===> Loading datasets')
-test_set = get_test_set(opt.data_dir, opt.nFrames, opt.upscale_factor, opt.file_list, opt.other_dataset, opt.future_frame)
+time_queue = Queue()
+inf_queue = Queue()
+test_set = get_test_set(opt.data_dir, opt.nFrames, opt.upscale_factor, opt.file_list, opt.other_dataset, opt.future_frame, flownet2, time_queue, opt)
 testing_data_loader = DataLoader(dataset=test_set, num_workers=opt.threads, batch_size=opt.testBatchSize, shuffle=False)
 
 print('===> Building model ', opt.model_type)
@@ -65,16 +83,18 @@ if cuda:
 model.load_state_dict(torch.load(opt.model, map_location=lambda storage, loc: storage))
 print('Pre-trained SR model is loaded.')
 
+
 if cuda:
     model = model.cuda(gpus_list[0])
 
-def eval():
+def eval(inf_queue):
     model.eval()
     count=1
     avg_psnr_predicted = 0.0
     for batch in testing_data_loader:
+        t_real_zero = time.time()
         input, target, neigbor, flow, bicubic = batch[0], batch[1], batch[2], batch[3], batch[4]
-        
+        print("L97: ", type(input), input.shape, type(target), target.shape) 
         with torch.no_grad():
             input = Variable(input).cuda(gpus_list[0])
             bicubic = Variable(bicubic).cuda(gpus_list[0])
@@ -93,28 +113,32 @@ def eval():
             prediction = prediction + bicubic
             
         t1 = time.time()
-        print("===> Processing: %s || Timer: %.4f sec." % (str(count), (t1 - t0)))
+        print("===> Processing: %s || Timer: %.4f sec. " % (str(count), (t1 - t0)))
+        inf_queue.put(t1-t0) 
         save_img(prediction.cpu().data, str(count), True)
-        #save_img(target, str(count), False)
+        save_img(target, str(count), False)
         
-        #prediction=prediction.cpu()
-        #prediction = prediction.data[0].numpy().astype(np.float32)
-        #prediction = prediction*255.
+        prediction = prediction.cpu()
+        prediction = prediction.data[0].numpy().astype(np.float32)
+        prediction = prediction*255.
         
-        #target = target.squeeze().numpy().astype(np.float32)
-        #target = target*255.
-                
-        #psnr_predicted = PSNR(prediction,target, shave_border=opt.upscale_factor)
-        #avg_psnr_predicted += psnr_predicted
+        target = target.squeeze().numpy().astype(np.float32)
+        target = target*255.
+        #print("THIS IS PREDICTION & TARGET: ", prediction.shape, target.shape)
+        psnr_predicted = PSNR(prediction,target, shave_border=opt.upscale_factor)
+        avg_psnr_predicted += psnr_predicted
         count+=1
-    
-    #print("PSNR_predicted=", avg_psnr_predicted/count)
+        #print("inside loop: AVG_PSNR: {}, COUNT: {}".format(avg_psnr_predicted, count)) 
+
+    print("AVG_PSNR: {}, COUNT: {}".format(avg_psnr_predicted, count)) 
+    print("PSNR_predicted=", avg_psnr_predicted/count)
 
 def save_img(img, img_name, pred_flag):
     save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
 
     # save img
     save_dir=os.path.join(opt.output, opt.data_dir, os.path.splitext(opt.file_list)[0]+'_'+str(opt.upscale_factor)+'x')
+    #print("L118 saving directory: ", save_dir)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
         
@@ -125,12 +149,16 @@ def save_img(img, img_name, pred_flag):
     cv2.imwrite(save_fn, cv2.cvtColor(save_img*255, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
 def PSNR(pred, gt, shave_border=0):
-    height, width = pred.shape[:2]
-    pred = pred[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
-    gt = gt[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
+    #height, width = pred.shape[:2]
+    height, width = pred.shape[1:]
+    #pred = pred[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
+    #gt = gt[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
+    pred = pred[:, 1+shave_border:height - shave_border, 1+shave_border:width - shave_border]
+    gt = gt[:, 1+shave_border:height - shave_border, 1+shave_border:width - shave_border]
     imdff = pred - gt
     rmse = math.sqrt(np.mean(imdff ** 2))
     if rmse == 0:
+        print("L135 at eval.py HERE! rmse==0!")
         return 100
     return 20 * math.log10(255.0 / rmse)
     
@@ -175,4 +203,19 @@ def chop_forward(x, neigbor, flow, model, scale, shave=8, min_size=2000, nGPUs=o
     return output
 
 ##Eval Start!!!!
-eval()
+eval(inf_queue)
+accumulated = 0 
+of_queue_len = time_queue.qsize()
+for _ in range(of_queue_len):
+  accumulated += time_queue.get() 
+print(of_queue_len, "AVG TIME EXTRACTING OF: ", accumulated / of_queue_len)
+
+
+accumulated_inf = 0
+inf_queue_len = inf_queue.qsize()
+for _ in range(inf_queue_len):
+  item = inf_queue.get() 
+  accumulated_inf += item 
+
+print(inf_queue_len, "AVG TIME INFERENCING MODEL: ", accumulated_inf / inf_queue_len)
+
