@@ -89,7 +89,11 @@ def get_flow(im1, im2, net, args, time_queue):
     #im2 = resize(np.array(im2), (128, 192), anti_aliasing=False)
     im1 = np.array(im1)
     im2 = np.array(im2)
+    print("DATASET L92 IM1.shape: {} Concat shape: {}".format(im1.shape, np.array([[im1, im2]]).shape), type(im1))
     ims = np.array([[im1, im2]]).transpose((0, 4, 1, 2, 3)).astype(np.float32)
+    print("DATASET L94 TRanspose shape: ", ims.shape)
+    #DATASET L92 IM1.shape: (128, 192, 3) Concat shape: (1, 2, 128, 192, 3) <class 'numpy.ndarray'>
+    #DATASET L94 TRanspose shape:  (1, 3, 2, 128, 192)
     ims = torch.from_numpy(ims)
     ims_v = Variable(ims.cuda(), requires_grad=False)
     
