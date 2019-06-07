@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
+#from torch.utils.data import DataLoader
 from rbpn import Net as RBPN
 from data import get_test_set
 from functools import reduce
@@ -20,6 +20,7 @@ import math
 import pdb
 
 from rbpn_loader import loader
+import nvvl
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Super Res Example')
