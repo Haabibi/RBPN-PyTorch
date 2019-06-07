@@ -8,7 +8,6 @@ import torch.optim as optim
 from torch.autograd import Variable
 #from torch.utils.data import DataLoader
 from rbpn import Net as RBPN
-from data import get_test_set
 from functools import reduce
 import numpy as np
 
