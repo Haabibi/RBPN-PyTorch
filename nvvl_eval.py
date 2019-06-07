@@ -12,7 +12,7 @@ from data import get_test_set
 from functools import reduce
 import numpy as np
 
-from scipy.misc import imsave
+from imageio import imsave
 import scipy.io as sio
 import time
 import cv2
@@ -21,13 +21,16 @@ import pdb
 
 from rbpn_loader import loader
 import nvvl
+from flownet2.models import FlowNet2 
+
+from multiprocessing import Process, Queue
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Super Res Example')
 parser.add_argument('--upscale_factor', type=int, default=4, help="super resolution upscale factor")
 parser.add_argument('--testBatchSize', type=int, default=1, help='testing batch size')
 parser.add_argument('--gpu_mode', type=bool, default=True)
-parser.add_argument('--chop_forward', type=bool, default=False)
+#parser.add_argument('--chop_forward', type=bool, default=False)
 parser.add_argument('--threads', type=int, default=1, help='number of threads for data loader to use')
 parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
 parser.add_argument('--gpus', default=1, type=int, help='number of gpu')
@@ -41,7 +44,9 @@ parser.add_argument('--model_type', type=str, default='RBPN')
 parser.add_argument('--residual', type=bool, default=False)
 parser.add_argument('--output', default='Results/', help='Location to save checkpoint models')
 parser.add_argument('--model', default='weights/RBPN_4x.pth', help='sr pretrained base model')
-
+## FlowNet specific parser arguments ##
+parser.add_argument('--rgb_max', type=float, default=255.0)
+parser.add_argument('--fp16', action='store_true')
 opt = parser.parse_args()
 
 gpus_list=range(opt.gpus)
@@ -56,8 +61,9 @@ if cuda:
     torch.cuda.manual_seed(opt.seed)
 
 frame_queue = Queue()
-print('===> Loading datasets')
-testing_data_loader = loader(opt.vid_dir, frame_queue) 
+
+#print('===> Loading datasets')
+#testing_data_loader = loader(opt.vid_dir, frame_queue) 
 
 print('===> Building model ', opt.model_type)
 if opt.model_type == 'RBPN':
@@ -69,51 +75,41 @@ if cuda:
 model.load_state_dict(torch.load(opt.model, map_location=lambda storage, loc: storage))
 print('Pre-trained SR model is loaded.')
 
+print('===> Building FlowNet model ')
+path = '/home/haabibi/official-flownet2-pytorch/ckpt/FlowNet2_checkpoint.pth.tar'
+flownet2 = FlowNet2(opt)
+pretrained_dict = torch.load(path)['state_dict']
+model_dict = flownet2.state_dict()
+pretrained_dict = {k:v for k,
+                   v in pretrained_dict.items() if k in model_dict}
+model_dict.update(pretrained_dict)
+
+flownet2.load_state_dict(model_dict)
+print('Pre-trained FlowNet model is loaded.') 
+
 if cuda:
     model = model.cuda(gpus_list[0])
+    flownet2 = flownet2.cuda(gpus_list[0])
 
-def eval(frame_queue):
+        
+def eval(model, flownet2, frame_queue):
     model.eval()
-    count=1
-    avg_psnr_predicted = 0.0
-    for batch in frame_queue.get():
-        input, target, neigbor, flow, bicubic = batch[0], batch[1], batch[2], batch[3], batch[4]
+    flownet2.eval() 
+    count = 1
+    while True: 
         
-        with torch.no_grad():
-            input = Variable(input).cuda(gpus_list[0])
-            bicubic = Variable(bicubic).cuda(gpus_list[0])
-            neigbor = [Variable(j).cuda(gpus_list[0]) for j in neigbor]
-            flow = [Variable(j).cuda(gpus_list[0]).float() for j in flow]
+        for batch in frame_queue.get():
+            input, neighbors, flow = batch[0], batch[1], batch[2]
+          
+            with torch.no_grad():
+                t0 = time.time()
+                prediction = model(input, neighbors, flow)
+                t1 = time.time()         
+                save_img(prediction.cpu().data, str(count), True)
+                print("===> Processing: %s || Timer: %.4f sec." % (str(count), (t1-t0)))
 
-        t0 = time.time()
-        if opt.chop_forward:
-            with torch.no_grad():
-                prediction = chop_forward(input, neigbor, flow, model, opt.upscale_factor)
-        else:
-            with torch.no_grad():
-                prediction = model(input, neigbor, flow) 
-        
-        if opt.residual:
-            prediction = prediction + bicubic
-            
-        t1 = time.time()
-        print("===> Processing: %s || Timer: %.4f sec." % (str(count), (t1 - t0)))
-        save_img(prediction.cpu().data, str(count), True)
-        #save_img(target, str(count), False)
-        
-        #prediction=prediction.cpu()
-        #prediction = prediction.data[0].numpy().astype(np.float32)
-        #prediction = prediction*255.
-        
-        #target = target.squeeze().numpy().astype(np.float32)
-        #target = target*255.
-                
-        #psnr_predicted = PSNR(prediction,target, shave_border=opt.upscale_factor)
-        #avg_psnr_predicted += psnr_predicted
-        count+=1
+            count+=1
     
-    #print("PSNR_predicted=", avg_psnr_predicted/count)
-
 def save_img(img, img_name, pred_flag):
     save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
 
@@ -128,55 +124,12 @@ def save_img(img, img_name, pred_flag):
         save_fn = save_dir +'/'+ img_name+'.png'
     cv2.imwrite(save_fn, cv2.cvtColor(save_img*255, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])
 
-def PSNR(pred, gt, shave_border=0):
-    height, width = pred.shape[:2]
-    pred = pred[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
-    gt = gt[1+shave_border:height - shave_border, 1+shave_border:width - shave_border, :]
-    imdff = pred - gt
-    rmse = math.sqrt(np.mean(imdff ** 2))
-    if rmse == 0:
-        return 100
-    return 20 * math.log10(255.0 / rmse)
-    
-def chop_forward(x, neigbor, flow, model, scale, shave=8, min_size=2000, nGPUs=opt.gpus):
-    b, c, h, w = x.size()
-    h_half, w_half = h // 2, w // 2
-    h_size, w_size = h_half + shave, w_half + shave
-    inputlist = [
-        [x[:, :, 0:h_size, 0:w_size], [j[:, :, 0:h_size, 0:w_size] for j in neigbor], [j[:, :, 0:h_size, 0:w_size] for j in flow]],
-        [x[:, :, 0:h_size, (w - w_size):w], [j[:, :, 0:h_size, (w - w_size):w] for j in neigbor], [j[:, :, 0:h_size, (w - w_size):w] for j in flow]],
-        [x[:, :, (h - h_size):h, 0:w_size], [j[:, :, (h - h_size):h, 0:w_size] for j in neigbor], [j[:, :, (h - h_size):h, 0:w_size] for j in flow]],
-        [x[:, :, (h - h_size):h, (w - w_size):w], [j[:, :, (h - h_size):h, (w - w_size):w] for j in neigbor], [j[:, :, (h - h_size):h, (w - w_size):w] for j in flow]]]
+main_p = Process(target=eval, args=(model, flownet2, frame_queue))    
+loader_p = Process(target=loader, args= ( '/cmsdata/ssd0/cmslab/Kinetics-400/sparta/laughing/0gR5FP7HpZ4_000024_000034.mp4', frame_queue, flownet2, 7))
 
-    if w_size * h_size < min_size:
-        outputlist = []
-        for i in range(0, 4, nGPUs):
-            with torch.no_grad():
-                input_batch = inputlist[i]#torch.cat(inputlist[i:(i + nGPUs)], dim=0)
-                output_batch = model(input_batch[0], input_batch[1], input_batch[2])
-            outputlist.extend(output_batch.chunk(nGPUs, dim=0))
-    else:
-        outputlist = [
-            chop_forward(patch[0], patch[1], patch[2], model, scale, shave, min_size, nGPUs) \
-            for patch in inputlist]
+for p in [main_p, loader_p]:
+    p.start()
 
-    h, w = scale * h, scale * w
-    h_half, w_half = scale * h_half, scale * w_half
-    h_size, w_size = scale * h_size, scale * w_size
-    shave *= scale
+for p in [main_p, loader_p]:
+    p.join()
 
-    with torch.no_grad():
-        output = Variable(x.data.new(b, c, h, w))
-    output[:, :, 0:h_half, 0:w_half] \
-        = outputlist[0][:, :, 0:h_half, 0:w_half]
-    output[:, :, 0:h_half, w_half:w] \
-        = outputlist[1][:, :, 0:h_half, (w_size - w + w_half):w_size]
-    output[:, :, h_half:h, 0:w_half] \
-        = outputlist[2][:, :, (h_size - h + h_half):h_size, 0:w_half]
-    output[:, :, h_half:h, w_half:w] \
-        = outputlist[3][:, :, (h_size - h + h_half):h_size, (w_size - w + w_half):w_size]
-
-    return output
-
-##Eval Start!!!!
-eval(frame_queue)
