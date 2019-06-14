@@ -18,14 +18,15 @@ def get_flow(im1, im2, flownet):
   return pred_flow
 
 
-def loader(filename, frame_queue, flownet, nFrames):
+def loader(filename, frame_queue, flownet, nFrames, sta_bar, fin_bar):
   import torch
   import nvvl
   from torch.multiprocessing import Queue 
   from flownet2.models import FlowNet2
+  sta_bar.wait()
   # Use our own CUDA stream to avoid synchronizing with other processes
   with torch.cuda.device(0):
-    device = torch.device('cuda:0')
+    #device = torch.device('cuda:0')
     stream = torch.cuda.Stream(device=0)
     with torch.cuda.stream(stream):
       with torch.no_grad():
@@ -47,12 +48,12 @@ def loader(filename, frame_queue, flownet, nFrames):
         loader.loadfile(filename)
         for frames in loader:
           pass
-        #loader.flush()
+        loader.flush()
         
         #300, 1, 3, 112, 112
         frames = frames.float()
         #ONLY SAMPLE FIRST FIVE FRAMES
-        frames = frames
+        #frames = frames[:10]
         original_frames = frames
         normalized_frames = frames / 255.
         print("THIS IS FRAMES: ", frames.shape, frames[0], torch.max(frames[0]), torch.min(frames[0]), torch.mean(frames[0]))
@@ -68,10 +69,13 @@ def loader(filename, frame_queue, flownet, nFrames):
           for i in seq:
             if target+i<0:
               _tmp.append(target)
+            elif target+i >= num_frames:
+              _tmp.append(target)
             else:
               _tmp.append(target+i)
           clip_collections.append(_tmp)
-
+        
+        print(len(frames), "THIS IS CLIP COLLECTIONS: ", clip_collections)
         #clip_collections = [range(i-3, i+4) for i in range(num_neighbors, num_frames-4)]
         counter = 1
         for clip in clip_collections: 
@@ -96,7 +100,8 @@ def loader(filename, frame_queue, flownet, nFrames):
           print("[NVVL {}] FlowNet OUTPUT: ".format(counter), flow_tensor.is_cuda, flow_tensor.shape, flow_tensor.type(), torch.mean(flow_tensor), torch.max(flow_tensor), torch.min(flow_tensor))
           counter += 1  
     
-        #loader.close()
+        loader.close()
+    fin_bar.wait()
 
 '''
 if __name__ == '__main__':

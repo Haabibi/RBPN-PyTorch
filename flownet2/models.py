@@ -29,7 +29,7 @@ class FlowNet2(nn.Module):
 
         # First Block (FlowNetC)
         self.flownetc = FlowNetC.FlowNetC(args, batchNorm=self.batchNorm)
-        self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
+        #self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
 
         if args.fp16:
             self.resample1 = nn.Sequential(
@@ -41,7 +41,7 @@ class FlowNet2(nn.Module):
 
         # Block (FlowNetS1)
         self.flownets_1 = FlowNetS.FlowNetS(args, batchNorm=self.batchNorm)
-        self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
+        #self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
         if args.fp16:
             self.resample2 = nn.Sequential(
                             tofp32(), 
@@ -56,8 +56,8 @@ class FlowNet2(nn.Module):
 
         # Block (FlowNetSD)
         self.flownets_d = FlowNetSD.FlowNetSD(args, batchNorm=self.batchNorm) 
-        self.upsample3 = nn.Upsample(scale_factor=4, mode='nearest') 
-        self.upsample4 = nn.Upsample(scale_factor=4, mode='nearest') 
+        #self.upsample3 = nn.Upsample(scale_factor=4, mode='nearest') 
+        #self.upsample4 = nn.Upsample(scale_factor=4, mode='nearest') 
 
         if args.fp16:
             self.resample3 = nn.Sequential(
@@ -116,7 +116,8 @@ class FlowNet2(nn.Module):
         #print("[Models [L116]]: ", x.shape, x1.shape, x2.shape, x.shape)
         # flownetc
         flownetc_flow2 = self.flownetc(x)[0]
-        flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
+        #flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
+        flownetc_flow = torch.nn.functional.interpolate(flownetc_flow2*self.div_flow, scale_factor=4, mode='bilinear')
         #print("[Models [L120]]: ", flownetc_flow2.shape, flownetc_flow.shape) 
         # warp img1 to img0; magnitude of diff between img0 and and warped_img1, 
         resampled_img1 = self.resample1(x[:,3:,:,:], flownetc_flow)
@@ -128,7 +129,8 @@ class FlowNet2(nn.Module):
         
         # flownets1
         flownets1_flow2 = self.flownets_1(concat1)[0]
-        flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        #flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        flownets1_flow = torch.nn.functional.interpolate(flownets1_flow2*self.div_flow, scale_factor=4, mode='bilinear') 
 
         # warp img1 to img0 using flownets1; magnitude of diff between img0 and and warped_img1
         resampled_img1 = self.resample2(x[:,3:,:,:], flownets1_flow)
@@ -140,7 +142,8 @@ class FlowNet2(nn.Module):
 
         # flownets2
         flownets2_flow2 = self.flownets_2(concat2)[0]
-        flownets2_flow = self.upsample4(flownets2_flow2 * self.div_flow)
+        #flownets2_flow = self.upsample4(flownets2_flow2 * self.div_flow)
+        flownets2_flow = torch.nn.functional.interpolate(flownets2_flow2 * self.div_flow,scale_factor=4, mode='nearest') 
         norm_flownets2_flow = self.channelnorm(flownets2_flow)
 
         diff_flownets2_flow = self.resample4(x[:,3:,:,:], flownets2_flow)
@@ -153,7 +156,8 @@ class FlowNet2(nn.Module):
 
         # flownetsd
         flownetsd_flow2 = self.flownets_d(x)[0]
-        flownetsd_flow = self.upsample3(flownetsd_flow2 / self.div_flow)
+        #flownetsd_flow = self.upsample3(flownetsd_flow2 / self.div_flow)
+        flownetsd_flow = torch.nn.functional.interpolate(flownetsd_flow2 / self.div_flow, scale_factor=4, mode='nearest') 
         norm_flownetsd_flow = self.channelnorm(flownetsd_flow)
         
         diff_flownetsd_flow = self.resample3(x[:,3:,:,:], flownetsd_flow)
@@ -239,7 +243,8 @@ class FlowNet2C(FlowNetC.FlowNetC):
         if self.training:
             return flow2,flow3,flow4,flow5,flow6
         else:
-            return self.upsample1(flow2*self.div_flow)
+            return torch.nn.function.interpolate(flow2*self.div_flow, scale_factor=4, mode='bilinear')
+            #return self.upsample1(flow2*self.div_flow)
 
 class FlowNet2S(FlowNetS.FlowNetS):
     def __init__(self, args, batchNorm=False, div_flow=20):
@@ -285,7 +290,8 @@ class FlowNet2S(FlowNetS.FlowNetS):
         if self.training:
             return flow2,flow3,flow4,flow5,flow6
         else:
-            return self.upsample1(flow2*self.div_flow)
+            return torch.nn.functional.interpolate(flow2*self.div_flow, scale_factor=4, mode='bilinear')
+            #return self.upsample1(flow2*self.div_flow)
 
 class FlowNet2SD(FlowNetSD.FlowNetSD):
     def __init__(self, args, batchNorm=False, div_flow=20):
@@ -337,7 +343,8 @@ class FlowNet2SD(FlowNetSD.FlowNetSD):
         if self.training:
             return flow2,flow3,flow4,flow5,flow6
         else:
-            return self.upsample1(flow2*self.div_flow)
+            return torch.nn.functional.interpolate(flow2*self.div_flow, scale_factor=4, mode='bilinear')
+            #return self.upsample1(flow2*self.div_flow)
 
 class FlowNet2CS(nn.Module):
 
@@ -352,7 +359,8 @@ class FlowNet2CS(nn.Module):
 
         # First Block (FlowNetC)
         self.flownetc = FlowNetC.FlowNetC(args, batchNorm=self.batchNorm)
-        self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
+        
+        #self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
 
         if args.fp16:
             self.resample1 = nn.Sequential(
@@ -364,7 +372,7 @@ class FlowNet2CS(nn.Module):
 
         # Block (FlowNetS1)
         self.flownets_1 = FlowNetS.FlowNetS(args, batchNorm=self.batchNorm)
-        self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
+        #self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -388,7 +396,8 @@ class FlowNet2CS(nn.Module):
 
         # flownetc
         flownetc_flow2 = self.flownetc(x)[0]
-        flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
+        flownetc_flow = torch.nn.functional.interpolate(flownetc_flow2*self.div_flow,scale_factor=4, mode='bilinear') 
+        #flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
         
         # warp img1 to img0; magnitude of diff between img0 and and warped_img1, 
         resampled_img1 = self.resample1(x[:,3:,:,:], flownetc_flow)
@@ -400,7 +409,8 @@ class FlowNet2CS(nn.Module):
         
         # flownets1
         flownets1_flow2 = self.flownets_1(concat1)[0]
-        flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        #flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        flownets1_flow = torch.nn.functional.interpolate(flownets1_flow2*self.div_flow, scale_factor=4, mode='bilinear')
 
         return flownets1_flow
 
@@ -417,8 +427,8 @@ class FlowNet2CSS(nn.Module):
 
         # First Block (FlowNetC)
         self.flownetc = FlowNetC.FlowNetC(args, batchNorm=self.batchNorm)
-        self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
-
+        #self.upsample1 = nn.Upsample(scale_factor=4, mode='bilinear')
+        
         if args.fp16:
             self.resample1 = nn.Sequential(
                             tofp32(), 
@@ -429,7 +439,7 @@ class FlowNet2CSS(nn.Module):
 
         # Block (FlowNetS1)
         self.flownets_1 = FlowNetS.FlowNetS(args, batchNorm=self.batchNorm)
-        self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
+        #self.upsample2 = nn.Upsample(scale_factor=4, mode='bilinear')
         if args.fp16:
             self.resample2 = nn.Sequential(
                             tofp32(), 
@@ -441,7 +451,7 @@ class FlowNet2CSS(nn.Module):
 
         # Block (FlowNetS2)
         self.flownets_2 = FlowNetS.FlowNetS(args, batchNorm=self.batchNorm)
-        self.upsample3 = nn.Upsample(scale_factor=4, mode='nearest') 
+        #self.upsample3 = nn.Upsample(scale_factor=4, mode='nearest') 
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -465,8 +475,8 @@ class FlowNet2CSS(nn.Module):
 
         # flownetc
         flownetc_flow2 = self.flownetc(x)[0]
-        flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
-        
+        #flownetc_flow = self.upsample1(flownetc_flow2*self.div_flow)
+        flownetc_flow = torch.nn.functional.interpolate(flownetc_flow2*self.div_flow)
         # warp img1 to img0; magnitude of diff between img0 and and warped_img1, 
         resampled_img1 = self.resample1(x[:,3:,:,:], flownetc_flow)
         diff_img0 = x[:,:3,:,:] - resampled_img1 
@@ -477,7 +487,8 @@ class FlowNet2CSS(nn.Module):
         
         # flownets1
         flownets1_flow2 = self.flownets_1(concat1)[0]
-        flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        #flownets1_flow = self.upsample2(flownets1_flow2*self.div_flow) 
+        flownets1_flow = torch.nn.functional.interpolate(flownets1_flow2*self.div_flow,scale_factor=4, mode='bilinear') 
 
         # warp img1 to img0 using flownets1; magnitude of diff between img0 and and warped_img1
         resampled_img1 = self.resample2(x[:,3:,:,:], flownets1_flow)
@@ -489,7 +500,8 @@ class FlowNet2CSS(nn.Module):
 
         # flownets2
         flownets2_flow2 = self.flownets_2(concat2)[0]
-        flownets2_flow = self.upsample3(flownets2_flow2 * self.div_flow)
-
+        #flownets2_flow = self.upsample3(flownets2_flow2 * self.div_flow)
+        flownets2_flow = torch.nn.functional.interpolate(flownets2_flow2 * self.div_flow, scale_factor=4, mode='nearest')
+        
         return flownets2_flow
 
