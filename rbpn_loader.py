@@ -23,6 +23,7 @@ def loader(filename, frame_queue, flownet, nFrames, sta_bar, fin_bar):
   import nvvl
   from torch.multiprocessing import Queue 
   from flownet2.models import FlowNet2
+  import time
   sta_bar.wait()
   # Use our own CUDA stream to avoid synchronizing with other processes
   with torch.cuda.device(0):
@@ -31,7 +32,7 @@ def loader(filename, frame_queue, flownet, nFrames, sta_bar, fin_bar):
     with torch.cuda.stream(stream):
       with torch.no_grad():
         loader = nvvl.RnBLoader(width=192, height=128, 
-                                consecutive_frames=1, device_id=0)
+                                consecutive_frames=1,  device_id=0)
         # first "warm up" the loader with a few videos
         '''
         samples = [
@@ -48,86 +49,52 @@ def loader(filename, frame_queue, flownet, nFrames, sta_bar, fin_bar):
         loader.loadfile(filename)
         for frames in loader:
           pass
-        loader.flush()
+        #loader.flush()
         
-        #300, 1, 3, 112, 112
+        # NUM_FRAMES, 1, 3, 192, 128
         frames = frames.float()
-        #ONLY SAMPLE FIRST FIVE FRAMES
-        #frames = frames[:10]
         original_frames = frames
         normalized_frames = frames / 255.
-        print("THIS IS FRAMES: ", frames.shape, frames[0], torch.max(frames[0]), torch.min(frames[0]), torch.mean(frames[0]))
 
         #sampler logic
         tt = int(nFrames / 2) 
         seq = [x for x in range(-tt, tt+1) if x!=0]
-        num_frames = len(frames)
+        NUM_FRAMES = len(frames)
 
         clip_collections = []
-        for target in range(num_frames):
+        for target in range(NUM_FRAMES):
           _tmp = []
           for i in seq:
             if target+i<0:
+              # for the first tt frames, which do not have neighboring frames that come earlier,
+              # append itself 
               _tmp.append(target)
-            elif target+i >= num_frames:
+            elif target+i >= NUM_FRAMES: 
+              # for the last tt frames, which do not have neighboring frames that come later,
+              # append itself
               _tmp.append(target)
             else:
               _tmp.append(target+i)
           clip_collections.append(_tmp)
         
-        print(len(frames), "THIS IS CLIP COLLECTIONS: ", clip_collections)
-        #clip_collections = [range(i-3, i+4) for i in range(num_neighbors, num_frames-4)]
-        counter = 1
+        counter = 0
         for clip in clip_collections: 
-          mid_idx = clip[int(len(clip)/2)]
-          original_input = original_frames[mid_idx]
-          normalized_input = normalized_frames[mid_idx]
-          original_neighbors = []
-          normalized_neighbors = []
+          starting_time = time.time()
+          original_input = original_frames[counter]
+          normalized_input = normalized_frames[counter]
+          original_neighbors, normalized_neighbors = [], []
           for i in range(len(clip)):
             original_neighbors.append(original_frames[clip[i]])
             normalized_neighbors.append(normalized_frames[clip[i]])
-          
-          
-          #neighbors.extend([frames[clip[i]] for i in clip if i != mid_idx])
-          neighbors_tensor = torch.stack(normalized_neighbors, dim=1)
-          print("[NVVL {}] FlowNet INPUT of Neighbors: ".format(counter), neighbors_tensor.is_cuda, neighbors_tensor.shape, neighbors_tensor.type(), torch.mean(neighbors_tensor), torch.max(neighbors_tensor), torch.min(neighbors_tensor))
-
+          # FlowNet2 requires tensors ranging from [0, 255] 
           flow = [get_flow(original_input, j, flownet) for j in original_neighbors]  
-
-          frame_queue.put_nowait([normalized_input, normalized_neighbors, flow])         
-          flow_tensor = torch.stack(flow, dim=1)
-          print("[NVVL {}] FlowNet OUTPUT: ".format(counter), flow_tensor.is_cuda, flow_tensor.shape, flow_tensor.type(), torch.mean(flow_tensor), torch.max(flow_tensor), torch.min(flow_tensor))
+          # RBPN requires tensors ranging from [0, 1]
+          frame_queue.put_nowait([normalized_input, normalized_neighbors, flow, starting_time])         
           counter += 1  
     
-        loader.close()
+        if counter == NUM_FRAMES: 
+            frame_queue.put_nowait([[], [], [], [] ])
+            loader.close() 
     fin_bar.wait()
+    frame_queue.cancel_join_thread()
 
-'''
-if __name__ == '__main__':
-  import argparse
-  import torch
-  parser = argparse.ArgumentParser()
-  parser.add_argument('--rgb_max', type=float, default=255.0)
-  parser.add_argument('--fp16', action='store_true')
-  opt = parser.parse_args()
-  #rgb_max = 255.0
-  #fp16=False
-  
-  queue = Queue()
-  print('===>Building FlowNet model ')
-  path = '/home/haabibi/official-flownet2-pytorch/ckpt/FlowNet2_checkpoint.pth.tar'
-  flownet2 = FlowNet2(opt)
-  pretrained_dict = torch.load(path)['state_dict']
-  model_dict = flownet2.state_dict()
-  pretrained_dict = {k:v for k,
-                     v in pretrained_dict.items() if k in model_dict}
-  model_dict.update(pretrained_dict)
-  flownet2.load_state_dict(model_dict)
-  flownet2.cuda()
-  loader( '/cmsdata/ssd0/cmslab/Kinetics-400/sparta/laughing/0gR5FP7HpZ4_000024_000034.mp4', queue, flownet2, 7)
-  while True:
-    input, neighbors, flow = queue.get()
-    print(input.shape, len(neighbors), neighbors[0].shape, len(flow), flow[0].shape)
-
-'''

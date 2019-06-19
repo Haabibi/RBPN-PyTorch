@@ -72,7 +72,6 @@ class Net(nn.Module):
         ### initial feature extraction
         feat_input = self.feat0(x)
         feat_frame=[]
-        print("/////RBPN//////", neigbor[0].shape, flow[0].shape)
         for j in range(len(neigbor)):
             feat_frame.append(self.feat1(torch.cat((x, neigbor[j], flow[j]),1)))
         

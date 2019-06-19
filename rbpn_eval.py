@@ -1,38 +1,63 @@
-def eval(model, flownet2, frame_queue, opt, sta_bar, fin_bar):
+def eval(model, flownet2, frame_queue, vid_frame_queue, opt, sta_bar, fin_bar):
     import torch
+    import cv2
     import time 
     from torch.autograd import Variable
     sta_bar.wait()
     model.eval()
     count = 1
+    result_list = []
     while True: 
         batch = frame_queue.get()
 
-        input, neighbors, flow = batch[0], batch[1], batch[2]
+        input, neighbors, flow, t0 = batch[0], batch[1], batch[2], batch[3]
+        if type(input)==list:
+            vid_frame_queue.put([])
+            break
+        else:
+            with torch.no_grad():
+                input = Variable(input)
+                neighbors = [Variable(j) for j in neighbors]
+                flow = [Variable(j).float() for j in flow]
+                prediction = model(input, neighbors, flow)
+                t1 = time.time()         
+                
+                frame_np = prediction.cpu().data.squeeze().clamp(0,1).numpy().transpose(1,2,0)
+                
+                # sending frames to queue to save as a video
+                vid_frame_queue.put(frame_np)
 
-        with torch.no_grad():
-            input = Variable(input)
-            neighbors = [Variable(j) for j in neighbors]
-            flow = [Variable(j).float() for j in flow]
-            
+                # saving img on disk just to check
+                save_img(frame_np, str(count), True, opt)
+                print("===> Processing: %s || Timer: %.4f sec." % (str(count), (t1-t0)))
+                count += 1
 
-            '''
-            neighbors_ = torch.stack(neighbors, dim=1) 
-            flow_ = torch.stack(flow, dim=1)
-            print("[NVVL {}] RBPN Input of target frame: ".format(count), input.shape, input.type(), torch.mean(input), torch.max(input), torch.min(input)) 
-            print("[NVVL {}] RBPN Input of neighbors: ".format(count), neighbors_.shape, neighbors_.type(), torch.mean(neighbors_), torch.max(neighbors_), torch.min(neighbors_)) 
-            print("[NVVL {}] RBPN Input of flows: ".format(count), flow_.shape, flow_.type(), torch.mean(flow_), torch.max(flow_), torch.min(flow_)) 
-            print("[[[[[[[[L18]]]]]]]]", neighbors[0].shape, flow[0].shape)
-            '''
-            t0 = time.time()
-            prediction = model(input, neighbors, flow)
-            t1 = time.time()         
-            print("[NVVL] RBPN Output: ", prediction.shape, prediction.type(), torch.mean(prediction))
-            save_img(prediction.cpu().data, str(count), True, opt)
-            print("===> Processing: %s || Timer: %.4f sec." % (str(count), (t1-t0)))
-
-        count+=1
     fin_bar.wait()
+    frame_queue.cancel_join_thread()
+    vid_frame_queue.cancel_join_thread()
+
+def save_vid(vid_frame_queue, sta_bar, fin_bar):
+    import cv2
+    sta_bar.wait()
+    fourcc =  cv2.VideoWriter_fourcc(*'mp4v')
+    video = cv2.VideoWriter('./sample.mp4', fourcc, 25, (512, 768))
+    frame_list = []
+    
+    while True:
+        if vid_frame_queue.qsize() > 0:
+            frame_np = vid_frame_queue.get()
+            if frame_np == []:
+                break
+            frame_list.append(frame_np) 
+    
+    for frame in frame_list:
+        frame = cv2.cvtColor(frame*255, cv2.COLOR_BGR2RGB) 
+        frame = frame.astype('uint8')
+        video.write(frame)
+    video.release()
+    
+    fin_bar.wait()
+    vid_frame_queue.cancel_join_thread()
 
 def save_img(img, img_name, pred_flag, opt):
     import os 
@@ -40,19 +65,10 @@ def save_img(img, img_name, pred_flag, opt):
     import cv2
     import torchvision.transforms.functional as F
 
-    #print(img.shape, img)
     # img.shape ==> [1, 3, 512, 768]
-    # original cv2 version 
-    save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
-    #save_img = img.squeeze().numpy().transpose(1,2,0)
+    #save_img = img.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
     # save_img.shape ==> (512, 768, 3)
-    #print(save_img.shape, save_img)
 
-    # new way of saving in PIL image
-    #frame = img.to(torch.uint8)
-    #save_img = frame.squeeze().clamp(0, 1).numpy().transpose(1,2,0)
-    #save_img = F.to_pil_image(frame.squeeze().cpu())
-    
     # save img
     save_dir=os.path.join(opt.output, opt.data_dir, os.path.splitext(opt.file_list)[0]+'_'+str(opt.upscale_factor)+'x')
     if not os.path.exists(save_dir):
@@ -63,7 +79,4 @@ def save_img(img, img_name, pred_flag, opt):
     else:
         save_fn = save_dir +'/'+ img_name+'.png'
     
-    #save_img.save(save_fn, "PNG")
-    #print("[L28] EVAL.PY: ", save_img.shape, save_img.dtype, type(save_img)) 
-    cv2.imwrite(save_fn, cv2.cvtColor(save_img*255, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])
-
+    cv2.imwrite(save_fn, cv2.cvtColor(img*255, cv2.COLOR_BGR2RGB),  [cv2.IMWRITE_PNG_COMPRESSION, 0])

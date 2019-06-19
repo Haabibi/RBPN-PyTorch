@@ -5,20 +5,27 @@ Project page: https://alterzero.github.io/projects/RBPN.html
 The original RBPN implementation was forked from [alterzero/RBPN-PyTorch](https://github.com/alterzero/RBPN-PyTorch).
 The codes in this repository uses [NVIDIA/nvll](https://github.com/NVIDIA/nvvl), a library that loads video frames straight on GPUs. Whereas the original implementation of RBPN applies super-resolution(SR) techniques on already extracted video frames, this repository aims to apply the SR technique on raw video files so that low-resolution(LR) videos do not have to go through preprocessing step (frame extraction and saving them on disk). 
 
+Since we want to expedite the computation by doing all the computations on GPU, we won't be using pyflow, which does all the computations on CPU, when extracting optical flows between an input RGB frame and neighboring frames. 
+We will instead be using [NVIDIA/FlowNet2.0](https://github.com/NVIDIA/flownet2-pytorch), a pytorch implementation of [FlowNet 2.0: Evolution of Optical Flow Estimation with Deep Networks](https://arxiv.org/abs/1612.01925). 
+
+This implementation of RBPN spawns two processes excluding the main process. 
+One extracts optical flows using FlowNet2 and sends the optical flows, neighboring RGB frames and an input RGB frame to a queue. The other runs RBPN with the item from the queue. 
+
 ## Dependencies
 * Python 3.5
 * PyTorch >= 1.0.0
-* Pyflow -> https://github.com/pathak22/pyflow
-  ```Shell
-  cd pyflow/
-  python setup.py build_ext -i
-  cp pyflow*.so ..
-  ```
 * NVVL1.1 -> https://github.com/Haabibi/nvvl
   ```Shell
+  # get forked version of NVVL1.1 source
   cd nvvl/pytorch1.0/ 
   python setup.py install
   ```
+* FlowNet2.0 -> code adapted from https://github.com/NVIDIA/flownet2-pytorch
+  ```Shell
+  cd flownet2
+  bash install.sh
+  ```
+
 
 ## Dataset
 * [Vimeo-90k Dataset](http://toflow.csail.mit.edu)
@@ -37,7 +44,7 @@ https://drive.google.com/drive/folders/1sI41DH5TUNBKkxRJ-_w5rUf90rN97UFn?usp=sha
 #Testing
 
     ```python
-    eval.py
+    nvvl_eval.py
     ```
 
 ![RBPN](https://alterzero.github.io/projects/RBPN.png)

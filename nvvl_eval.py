@@ -20,7 +20,7 @@ if __name__ == '__main__':
   import pdb
 
   from rbpn_loader import loader
-  from rbpn_eval import eval
+  from rbpn_eval import eval, save_vid
   import nvvl
   from flownet2.models import FlowNet2 
 
@@ -35,7 +35,7 @@ if __name__ == '__main__':
   parser.add_argument('--gpus', default=1, type=int, help='number of gpu')
   parser.add_argument('--data_dir', type=str, default='./Vid4')
   parser.add_argument('--file_list', type=str, default='foliage.txt')
-  parser.add_argument('--vid_dir', type=str, default='./Vid4/video/foliage.avi')
+  parser.add_argument('--vid_dir', type=str, default='./Vid4_video/new_city.mp4')
   parser.add_argument('--other_dataset', type=bool, default=True, help="use other dataset than vimeo-90k")
   parser.add_argument('--future_frame', type=bool, default=True, help="use future frame")
   parser.add_argument('--nFrames', type=int, default=7)
@@ -43,6 +43,7 @@ if __name__ == '__main__':
   parser.add_argument('--residual', type=bool, default=False)
   parser.add_argument('--output', default='Results/', help='Location to save checkpoint models')
   parser.add_argument('--model', default='weights/RBPN_4x.pth', help='sr pretrained base model')
+   
 
   ## FlowNet specific parser arguments ##
   parser.add_argument('--rgb_max', type=float, default=255.0)
@@ -60,12 +61,13 @@ if __name__ == '__main__':
   if cuda:
       torch.cuda.manual_seed(opt.seed)
 
-  bar_total = 3 # 1 main process + 1 eval + 1 flownet 
+  bar_total = 4 # 1 main process + 1 eval + 1 flownet + 1 save_vid 
   
   sta_bar = Barrier(bar_total)
   fin_bar = Barrier(bar_total)
 
   frame_queue = Queue()
+  vid_frame_queue = Queue()
 
   print('===> Building model ', opt.model_type)
   if opt.model_type == 'RBPN':
@@ -93,11 +95,11 @@ if __name__ == '__main__':
       model = model.cuda(gpus_list[0])
       flownet2 = flownet2.cuda(gpus_list[0])
           
-  eval_p = Process(target=eval, args=(model, flownet2, frame_queue, opt, sta_bar, fin_bar))    
-  #loader_p = Process(target=loader, args= ( '/cmsdata/ssd0/cmslab/Kinetics-400/sparta/laughing/0gR5FP7HpZ4_000024_000034.mp4', frame_queue, flownet2, 7))
-  loader_p = Process(target=loader, args=('./Vid4_video/city.mp4', frame_queue, flownet2, 7, sta_bar, fin_bar))
+  eval_p = Process(target=eval, args=(model, flownet2, frame_queue, vid_frame_queue, opt, sta_bar, fin_bar))    
+  loader_p = Process(target=loader, args=(opt.vid_dir, frame_queue, flownet2, 7, sta_bar, fin_bar))
+  save_vid_p = Process(target=save_vid, args=(vid_frame_queue, sta_bar, fin_bar))
 
-  for p in [eval_p, loader_p]:
+  for p in [eval_p, loader_p, save_vid_p]:
       p.start()
       
   sta_bar.wait()
@@ -105,3 +107,4 @@ if __name__ == '__main__':
   fin_bar.wait()
   for p in [eval_p, loader_p]:
       p.join()
+  print("ALL PROCESSES ENDING PROPERLY!")
