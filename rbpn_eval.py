@@ -40,7 +40,7 @@ def save_vid(vid_frame_queue, sta_bar, fin_bar):
     import cv2
     sta_bar.wait()
     fourcc =  cv2.VideoWriter_fourcc(*'mp4v')
-    video = cv2.VideoWriter('./sample.mp4', fourcc, 25, (512, 768))
+    out = cv2.VideoWriter('./sample.mp4', fourcc, 25, (512, 768))
     frame_list = []
     
     while True:
@@ -53,8 +53,8 @@ def save_vid(vid_frame_queue, sta_bar, fin_bar):
     for frame in frame_list:
         frame = cv2.cvtColor(frame*255, cv2.COLOR_BGR2RGB) 
         frame = frame.astype('uint8')
-        video.write(frame)
-    video.release()
+        out.write(frame)
+    out.release()
     
     fin_bar.wait()
     vid_frame_queue.cancel_join_thread()

@@ -49,7 +49,7 @@ def loader(filename, frame_queue, flownet, nFrames, sta_bar, fin_bar):
         loader.loadfile(filename)
         for frames in loader:
           pass
-        #loader.flush()
+        loader.flush()
         
         # NUM_FRAMES, 1, 3, 192, 128
         frames = frames.float()
