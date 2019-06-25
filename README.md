@@ -1,7 +1,7 @@
 # Recurrent Back-Projection Network for Video Super-Resolution (CVPR2019)
 
 The original RBPN implementation was forked from [alterzero/RBPN-PyTorch](https://github.com/alterzero/RBPN-PyTorch).
-The codes in this repository uses [NVIDIA/nvll](https://github.com/NVIDIA/nvvl), a library that loads video frames straight on GPUs. Whereas the original implementation of RBPN applies super-resolution(SR) techniques on already extracted video frames, this repository aims to apply the SR technique on raw video files so that low-resolution(LR) videos do not have to go through preprocessing step (extracting frames from videos and saving them on disk). 
+The codes in this repository uses [NVIDIA/nvvl](https://github.com/NVIDIA/nvvl), a library that loads video frames straight on GPUs. Whereas the original implementation of RBPN applies super-resolution(SR) techniques on already extracted video frames, this repository aims to apply the SR technique on raw video files so that low-resolution(LR) videos do not have to go through preprocessing step (extracting frames from videos and saving them on disk). 
 
 Since we want to expedite the computation by doing all the computations on GPU, we won't be using pyflow, which does all the computations on CPU, when extracting optical flows between an input RGB frame and neighboring frames. 
 We will instead be using [NVIDIA/FlowNet2.0](https://github.com/NVIDIA/flownet2-pytorch), a pytorch implementation of [FlowNet 2.0: Evolution of Optical Flow Estimation with Deep Networks](https://arxiv.org/abs/1612.01925). 
@@ -12,8 +12,11 @@ The first process extracts optical flows using FlowNet2 and sends the optical fl
 
 
 ## Dependencies
-* Python 3.5
+* Python >= 3.5
 * PyTorch >= 1.0.0
+  ```Shell
+  pip install torch==1.0.1 -f https://download.pytorch.org/whl/cu100/stable
+  ```
 * NVVL1.1 -> https://github.com/Haabibi/nvvl
   ```Shell
   # get forked version of NVVL1.1 source
@@ -22,12 +25,45 @@ The first process extracts optical flows using FlowNet2 and sends the optical fl
   ```
 * FlowNet2.0 -> code adapted from https://github.com/NVIDIA/flownet2-pytorch
   ```Shell
-  cd flownet2
+  cd flownet2-pytorch
   bash install.sh
   ```
 
-## Pretrained Model and Testset
+
+**For creating optimal environment for running RnB with RBPN, this is the step-by-step process for reproducing the environment I tested on.**
+(Partially adapted from RnB repository)
+
+```Shell
+git clone https://github.com/snuspl/rnb
+cd rnb
+# delete lines regarding pytorch-0.4.1/ torchvision-0.2.1 in 'spec-file.txt'
+conda create -n <env_name> --file spec-file.txt
+source activate <env_name>
+cd ~
+export PKG_CONFIG_PATH=/home/<username>/miniconda2/envs/<env_name>/lib/pkgconfig:$PKG_CONFIG_PATH # change accordingly, should include the file libavformat.pc
+
+conda install pytorch torchvision cudatoolkit=10.0 -c pytorch     # this installs  cudatoolkit-10.0.130 / pytorch-1.1.0 / torchvision-0.3.0
+pip install imageio
+pip install scipy
+
+git clone https://github.com/Haabibi/nvvl
+cd nvvl/pytorch1.0
+python setup.install  
+
+cd ~/ #any directory that does not have a subdirectory called 'nvvl'
+python -c 'from nvvl import RnBLoader' 
+
+cd ~/RBPN-PyTorch/flownet2
+bash install.sh
+```
+
+## Pretrained Model for RBPN
 https://drive.google.com/drive/folders/1sI41DH5TUNBKkxRJ-_w5rUf90rN97UFn?usp=sharing
+
+## Pretrained Model for FlowNet2.0
+https://drive.google.com/file/d/1hF8vS6YeHkx3j2pfCeQqqZGwA_PJq_Da/view?usp=sharing 
+(more models can be found under flownet2 directory)
+(place the model under ./flownet2/ckpt)
 
 ## HOW TO
 

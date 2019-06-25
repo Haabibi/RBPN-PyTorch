@@ -80,7 +80,7 @@ if __name__ == '__main__':
   print('Pre-trained SR model is loaded.')
 
   print('===> Building FlowNet model ')
-  path = '/home/haabibi/official-flownet2-pytorch/ckpt/FlowNet2_checkpoint.pth.tar'
+  path = './flownet2/ckpt/FlowNet2_checkpoint.pth.tar'
   flownet2 = FlowNet2(opt)
   pretrained_dict = torch.load(path)['state_dict']
   model_dict = flownet2.state_dict()
